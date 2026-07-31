@@ -258,11 +258,6 @@ export async function presentAssistantMessage(cline: Task) {
 				pushToolResult(formatResponse.toolError(errorString))
 			}
 
-			if (!mcpBlock.partial) {
-				cline.recordToolUsage("use_mcp_tool") // Record as use_mcp_tool for analytics
-				TelemetryService.instance.captureToolUsage(cline.taskId, "use_mcp_tool")
-			}
-
 			// Resolve sanitized server name back to original server name
 			// The serverName from parsing is sanitized (e.g., "my_server" from "my server")
 			// We need the original name to find the actual MCP connection
@@ -298,6 +293,12 @@ export async function presentAssistantMessage(cline: Task) {
 				askApproval,
 				handleError,
 				pushToolResult,
+				onValidated: mcpBlock.partial
+					? undefined
+					: () => {
+							cline.recordToolUsage("use_mcp_tool")
+							TelemetryService.instance.captureToolUsage(cline.taskId, "use_mcp_tool")
+						},
 			})
 			break
 		}

@@ -410,7 +410,6 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	private readonly _isHistoryTask: boolean
 	// No streaming parser is required.
 	assistantMessageParser?: undefined
-	private providerProfileChangeListener?: (config: { name: string; provider?: string }) => void
 
 	// Native tool call streaming state (track which index each tool is at)
 	private streamingToolCallIndices: Map<string, number> = new Map()
@@ -562,9 +561,6 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 		this.messageQueueService.on("stateChanged", this.messageQueueStateChangedHandler)
 
-		// Listen for provider profile changes to update parser state
-		this.setupProviderProfileChangeListener(provider)
-
 		// Set up diff strategy
 		this.diffStrategy = new MultiSearchReplaceDiffStrategy(diffFuzzyThreshold)
 
@@ -688,39 +684,6 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			const errorMessage = `Failed to initialize task API config name: ${error instanceof Error ? error.message : String(error)}`
 			provider.log(errorMessage)
 		}
-	}
-
-	/**
-	 * Sets up a listener for provider profile changes.
-	 *
-	 * @private
-	 * @param provider - The ClineProvider instance to listen to
-	 */
-	private setupProviderProfileChangeListener(provider: ClineProvider): void {
-		// Only set up listener if provider has the on method (may not exist in test mocks)
-		if (typeof provider.on !== "function") {
-			return
-		}
-
-		this.providerProfileChangeListener = async () => {
-			if (provider.getCurrentTask()?.taskId !== this.taskId) {
-				return
-			}
-
-			try {
-				const newState = await provider.getState()
-				if (newState?.apiConfiguration) {
-					this.updateApiConfiguration(newState.apiConfiguration)
-				}
-			} catch (error) {
-				console.error(
-					`[Task#${this.taskId}.${this.instanceId}] Failed to update API configuration on profile change:`,
-					error,
-				)
-			}
-		}
-
-		provider.on(RooCodeEventName.ProviderProfileChanged, this.providerProfileChangeListener)
 	}
 
 	/**
@@ -1541,7 +1504,6 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			if (provider) {
 				if (mode) {
 					await provider.setMode(mode)
-					await this.waitForModeInitialization()
 					this._taskMode = mode
 				}
 
@@ -1597,6 +1559,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// Get condensing configuration
 		const state = await this.providerRef.deref()?.getState()
 		const customCondensingPrompt = state?.customSupportPrompts?.CONDENSE
+		// Use task-local values, not provider state, to prevent cross-task configuration leaks.
 		const mode = await this.getTaskMode()
 		const apiConfiguration = this.apiConfiguration
 
@@ -2284,19 +2247,6 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			console.error("Error cancelling current request:", error)
 		}
 
-		// Remove provider profile change listener
-		try {
-			if (this.providerProfileChangeListener) {
-				const provider = this.providerRef.deref()
-				if (provider) {
-					provider.off(RooCodeEventName.ProviderProfileChanged, this.providerProfileChangeListener)
-				}
-				this.providerProfileChangeListener = undefined
-			}
-		} catch (error) {
-			console.error("Error removing provider profile change listener:", error)
-		}
-
 		// Dispose message queue and remove event listeners.
 		try {
 			if (this.messageQueueStateChangedHandler) {
@@ -2588,7 +2538,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			const showRooIgnoredFiles = state?.showRooIgnoredFiles ?? false
 			const includeDiagnosticMessages = state?.includeDiagnosticMessages ?? true
 			const maxDiagnosticMessages = state?.maxDiagnosticMessages ?? 50
-			const currentMode = state?.mode ?? defaultModeSlug
+			const currentMode = await this.getTaskMode()
 
 			const { content: parsedUserContent, mode: slashCommandMode } = await processUserContentMentions({
 				userContent: currentUserContent,
@@ -3791,6 +3741,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 		const { customModes, customModePrompts, customInstructions, experiments, language, enableSubfolderRules } =
 			state ?? {}
+		// Use task-local values, not provider state, to prevent cross-task configuration leaks.
 		const mode = await this.getTaskMode()
 		const apiConfiguration = this.apiConfiguration
 
@@ -3859,6 +3810,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	private async handleContextWindowExceededError(): Promise<void> {
 		const state = await this.providerRef.deref()?.getState()
 		const { profileThresholds = {} } = state ?? {}
+		// Use task-local values, not provider state, to prevent cross-task configuration leaks.
 		const mode = await this.getTaskMode()
 		const apiConfiguration = this.apiConfiguration
 
@@ -4039,6 +3991,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			autoCondenseContextPercent = 100,
 			profileThresholds = {},
 		} = state ?? {}
+		// Use task-local values, not provider state, to prevent cross-task configuration leaks.
 		const mode = await this.getTaskMode()
 		const apiConfiguration = this.apiConfiguration
 
@@ -4453,7 +4406,7 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 
 			// Respect provider rate limit window
 			let rateLimitDelay = 0
-			const rateLimit = this.apiConfiguration?.rateLimitSeconds || 0
+			const rateLimit = this.apiConfiguration?.rateLimitSeconds ?? 0
 			const lastRequestTime = this.rateLimitClock.getLastRequestTime()
 			if (lastRequestTime && rateLimit > 0) {
 				const elapsed = performance.now() - lastRequestTime

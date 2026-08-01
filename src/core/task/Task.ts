@@ -703,6 +703,10 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		}
 
 		this.providerProfileChangeListener = async () => {
+			if (provider.getCurrentTask()?.taskId !== this.taskId) {
+				return
+			}
+
 			try {
 				const newState = await provider.getState()
 				if (newState?.apiConfiguration) {
@@ -1537,6 +1541,8 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			if (provider) {
 				if (mode) {
 					await provider.setMode(mode)
+					await this.waitForModeInitialization()
+					this._taskMode = mode
 				}
 
 				if (providerProfile) {

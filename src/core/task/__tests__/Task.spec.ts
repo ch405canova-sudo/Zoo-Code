@@ -1708,6 +1708,30 @@ describe("Cline", () => {
 				expect(requireDefined(createMessage.mock.calls[0])[2]?.mode).toBe("code")
 			})
 
+			it("stores a provider profile selected through submitUserMessage", async () => {
+				const selectedConfiguration: ProviderSettings = {
+					...mockApiConfig,
+					apiModelId: "selected-model",
+				}
+				const task = new Task({
+					provider: mockProvider,
+					apiConfiguration: mockApiConfig,
+					task: "initial task",
+					startTask: false,
+				})
+				task.setTaskApiConfigName("previous-profile")
+				vi.spyOn(mockProvider, "setProviderProfile").mockResolvedValue(undefined)
+				vi.spyOn(mockProvider, "getState").mockResolvedValue({
+					currentApiConfigName: "selected-profile",
+					apiConfiguration: selectedConfiguration,
+				})
+				vi.spyOn(task, "handleWebviewAskResponse").mockImplementation(() => {})
+
+				await task.submitUserMessage("switch profiles", undefined, undefined, "selected-profile")
+
+				expect(task.taskApiConfigName).toBe("selected-profile")
+			})
+
 			it("should handle empty messages gracefully", async () => {
 				const task = new Task({
 					provider: mockProvider,
